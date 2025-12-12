@@ -19,9 +19,9 @@ jobs:
       - name: Detect added, modified, deleted files
         id: changes
         run: |
-          ADDED=$(git diff --name-only --diff-filter=A HEAD^ HEAD | grep "^projects/" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M HEAD^ HEAD | grep "^projects/" || true)
-          DELETED=$(git diff --name-only --diff-filter=D HEAD^ HEAD | grep "^projects/" || true)
+          ADDED=$(git diff --name-only --diff-filter=A HEAD^ HEAD | grep "^source-projects/" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M HEAD^ HEAD | grep "^source-projects/" || true)
+          DELETED=$(git diff --name-only --diff-filter=D HEAD^ HEAD | grep "^source-projects/" || true)
 
           echo "Added files: $ADDED"
           echo "Modified files: $MODIFIED"
