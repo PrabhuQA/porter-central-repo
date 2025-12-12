@@ -3,7 +3,7 @@ name: GitOps Project Management
 on:
   push:
     paths:
-      - "projects/*.yaml"
+      - "source-projects/*.yaml"
 
 jobs:
   manage:
