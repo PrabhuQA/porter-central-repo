@@ -16,13 +16,14 @@ jobs:
         with:
           fetch-depth: 2   # Needed to detect changes between HEAD^ and HEAD
 
-      - name: Install yq
+      - name: Install yq and jq
         run: |
           sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
           sudo chmod +x /usr/bin/yq
+          sudo apt-get update && sudo apt-get install -y jq
 
       # =============================================================
-      # Detect ADDED / MODIFIED / DELETED project files
+      # Detect ADDED / MODIFIED / DELETED YAML files
       # =============================================================
       - name: Detect added, modified, deleted files
         id: changes
@@ -40,7 +41,7 @@ jobs:
           echo "deleted=$DELETED" >> $GITHUB_OUTPUT
 
       # =============================================================
-      # DELETE PROJECTS for deleted YAML files
+      # DELETE PROJECTS (for deleted YAML files)
       # =============================================================
       - name: Delete Projects
         if: steps.changes.outputs.deleted != ''
@@ -61,7 +62,7 @@ jobs:
           deleted: ${{ steps.changes.outputs.deleted }}
 
       # =============================================================
-      # CREATE PROJECTS for newly added YAML files
+      # CREATE PROJECTS (for newly added YAML files)
       # =============================================================
       - name: Create Projects
         if: steps.changes.outputs.added != ''
@@ -72,19 +73,27 @@ jobs:
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
             PAYLOAD=$(yq -o=json '.' "$file")
 
+            # Merge name + YAML fields (required by OpsMx API)
+            FINAL_PAYLOAD=$(jq -n \
+              --arg name "$PROJECT_NAME" \
+              --argjson cfg "$PAYLOAD" \
+              '[{name:$name} + $cfg]'
+            )
+
             echo "→ CREATE project: $PROJECT_NAME"
+            echo "Payload: $FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/upload?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
               --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
               --header "Content-Type: application/json" \
-              --data "[{\"name\":\"$PROJECT_NAME\", \"data\": $PAYLOAD}]"
+              --data "$FINAL_PAYLOAD"
           done
         env:
           added: ${{ steps.changes.outputs.added }}
 
       # =============================================================
-      # UPDATE PROJECTS for modified YAML files
+      # UPDATE PROJECTS (for modified YAML files)
       # =============================================================
       - name: Update Projects
         if: steps.changes.outputs.modified != ''
@@ -95,13 +104,21 @@ jobs:
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
             PAYLOAD=$(yq -o=json '.' "$file")
 
+            # Merge name + YAML fields for update API
+            FINAL_PAYLOAD=$(jq -n \
+              --arg name "$PROJECT_NAME" \
+              --argjson cfg "$PAYLOAD" \
+              '[{name:$name} + $cfg]'
+            )
+
             echo "→ UPDATE project: $PROJECT_NAME"
+            echo "Payload: $FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/update?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
               --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
               --header "Content-Type: application/json" \
-              --data "[{\"name\":\"$PROJECT_NAME\", \"data\": $PAYLOAD}]"
+              --data "$FINAL_PAYLOAD"
           done
         env:
           modified: ${{ steps.changes.outputs.modified }}
