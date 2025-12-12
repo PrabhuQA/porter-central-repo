@@ -1,0 +1,92 @@
+name: GitOps Project Management
+
+on:
+  push:
+    paths:
+      - "projects/*.yaml"
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (full history to detect deletions)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
+
+      ##################################################################
+      # DELETE PROJECT WHEN YAML FILE IS REMOVED
+      ##################################################################
+      - name: Delete Removed Projects
+        if: ${{ github.event.head_commit.removed }}
+        run: |
+          echo "Checking deleted files..."
+          for file in ${{ github.event.head_commit.removed }}; do
+            if [[ "$file" == projects/*.yaml ]]; then
+              PROJECT_NAME=$(basename "$file" .yaml)
+              echo "Deleting project: $PROJECT_NAME"
+
+              curl --location \
+                "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/delete?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
+                --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
+                --header "Content-Type: application/json" \
+                --data "[{\"name\":\"$PROJECT_NAME\"}]"
+            fi
+          done
+
+      ##################################################################
+      # CREATE OR UPDATE PROJECT FOR ADDED OR MODIFIED FILES
+      ##################################################################
+      - name: Detect Added/Modified Files
+        id: changes
+        run: |
+          ADDED=$(git diff --name-only --diff-filter=A origin/main...HEAD | grep "^projects/" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M origin/main...HEAD | grep "^projects/" || true)
+
+          echo "added_files=$ADDED" >> $GITHUB_OUTPUT
+          echo "modified_files=$MODIFIED" >> $GITHUB_OUTPUT
+
+      ##################################################################
+      # CREATE PROJECT
+      ##################################################################
+      - name: Create Projects for Newly Added Files
+        if: steps.changes.outputs.added_files != ''
+        run: |
+          for file in ${{ steps.changes.outputs.added_files }}; do
+            echo "Creating project from file: $file"
+
+            PROJECT_NAME=$(basename "$file" .yaml)
+            PAYLOAD=$(yq -o=json '.' "$file")
+
+            curl --location \
+              "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/upload?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
+              --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
+              --header "Content-Type: application/json" \
+              --data "[{\"name\":\"$PROJECT_NAME\", \"$(yq -o=json '.' "$file")\"}]"
+          done
+
+      ##################################################################
+      # UPDATE PROJECT
+      ##################################################################
+      - name: Update Projects for Modified Files
+        if: steps.changes.outputs.modified_files != ''
+        run: |
+          for file in ${{ steps.changes.outputs.modified_files }}; do
+            echo "Updating project from file: $file"
+
+            PROJECT_NAME=$(basename "$file" .yaml)
+            PAYLOAD=$(yq -o=json '.' "$file")
+
+            curl --location \
+              "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/update?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
+              --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
+              --header "Content-Type: application/json" \
+              --data "[{\"name\":\"$PROJECT_NAME\", \"$(yq -o=json '.' "$file")\"}]"
+          done
+

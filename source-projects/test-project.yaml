@@ -1,0 +1,16 @@
+scanType: sourceScan
+platform: github
+accountName: test-git (test)
+teamName: test
+scanLevel: repoLevel
+organisation: PrabhuQA
+type: user
+
+projectConfigs:
+  - repository: buildme
+    scheduleTime: 0
+    branch:
+      - b1
+    branchPattern: ""
+    scanUpto: 0
+
