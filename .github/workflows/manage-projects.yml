@@ -3,8 +3,8 @@ name: Sync Projects to API
 on:
   push:
     paths:
-      - "projects/*.yaml"
-      - "projects/*.yml"
+      - "source-projects/*.yaml"
+      - "source-projects/*.yml"
 
 jobs:
   sync:
