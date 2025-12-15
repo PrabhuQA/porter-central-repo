@@ -36,15 +36,14 @@ jobs:
       - name: Detect added, modified, deleted files
         id: changes
         run: |
-          # Ensure base branch exists
-          git fetch origin main
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
 
-          BASE=$(git merge-base HEAD origin/main)
-          echo "Diff base: $BASE"
+          echo "Diff range: $BEFORE → $AFTER"
 
-          ADDED=$(git diff --name-only --diff-filter=A $BASE HEAD | grep -E "^(source-projects|artifacts)/" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M $BASE HEAD | grep -E "^(source-projects|artifacts)/" || true)
-          DELETED=$(git diff --name-only --diff-filter=D $BASE HEAD | grep -E "^(source-projects|artifacts)/" || true)
+          ADDED=$(git diff --name-only --diff-filter=A "$BEFORE" "$AFTER" | grep -E "^(source-projects|artifacts)/" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M "$BEFORE" "$AFTER" | grep -E "^(source-projects|artifacts)/" || true)
+          DELETED=$(git diff --name-only --diff-filter=D "$BEFORE" "$AFTER" | grep -E "^(source-projects|artifacts)/" || true)
 
           echo "Added files:"
           echo "$ADDED"
