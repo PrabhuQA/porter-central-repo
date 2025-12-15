@@ -1,0 +1,15 @@
+scanType: artifactScan
+platform: docker
+accountName: test-git (test)
+teamName: test
+scanLevel: repoLevel
+organisation: opsmx11
+type:
+
+projectConfigs:
+  - repository: restapp
+    scheduleTime: 0
+    tag:
+      - simple-restapp-17413
+    tagPattern: ""
+    scanUpto: 0
