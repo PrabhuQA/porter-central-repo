@@ -12,9 +12,10 @@ jobs:
 
     steps:
       - name: Checkout repo
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # Needed to detect changes between HEAD^ and HEAD
+          fetch-depth: 0    # FULL history needed for multi-commit detection
 
       - name: Install yq and jq
         run: |
@@ -23,34 +24,35 @@ jobs:
           sudo apt-get update && sudo apt-get install -y jq
 
       # =============================================================
-      # Detect ADDED / MODIFIED / DELETED YAML files
+      # DETECT ADDED / MODIFIED / DELETED FILES (multi-commit safe)
       # =============================================================
-      - name: Detect added, modified, deleted files
+      - name: Detect changes across multiple commits
         id: changes
         run: |
-          ADDED=$(git diff --name-only --diff-filter=A HEAD^ HEAD | grep "^source-projects/" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M HEAD^ HEAD | grep "^source-projects/" || true)
-          DELETED=$(git diff --name-only --diff-filter=D HEAD^ HEAD | grep "^source-projects/" || true)
+          BASE=$(git merge-base HEAD origin/main)   # use origin/master if needed
+          echo "Comparing changes from $BASE → HEAD"
 
-          echo "Added files: $ADDED"
-          echo "Modified files: $MODIFIED"
-          echo "Deleted files: $DELETED"
+          ADDED=$(git diff --name-only --diff-filter=A $BASE HEAD | grep "^source-projects/" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M $BASE HEAD | grep "^source-projects/" || true)
+          DELETED=$(git diff --name-only --diff-filter=D $BASE HEAD | grep "^source-projects/" || true)
+
+          echo "Added: $ADDED"
+          echo "Modified: $MODIFIED"
+          echo "Deleted: $DELETED"
 
           echo "added=$ADDED" >> $GITHUB_OUTPUT
           echo "modified=$MODIFIED" >> $GITHUB_OUTPUT
           echo "deleted=$DELETED" >> $GITHUB_OUTPUT
 
       # =============================================================
-      # DELETE PROJECTS (for deleted YAML files)
+      # DELETE PROJECTS
       # =============================================================
       - name: Delete Projects
         if: steps.changes.outputs.deleted != ''
         run: |
           for file in ${deleted}; do
-            echo "Deleting project for file: $file"
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
-
-            echo "→ DELETE project: $PROJECT_NAME"
+            echo "→ Deleting project: $PROJECT_NAME"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/delete?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
@@ -62,26 +64,22 @@ jobs:
           deleted: ${{ steps.changes.outputs.deleted }}
 
       # =============================================================
-      # CREATE PROJECTS (for newly added YAML files)
+      # CREATE PROJECTS
       # =============================================================
       - name: Create Projects
         if: steps.changes.outputs.added != ''
         run: |
           for file in ${added}; do
-            echo "Creating project from: $file"
-
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
+            echo "→ Creating project: $PROJECT_NAME"
+
             PAYLOAD=$(yq -o=json '.' "$file")
 
-            # Merge name + YAML fields (required by OpsMx API)
             FINAL_PAYLOAD=$(jq -n \
               --arg name "$PROJECT_NAME" \
               --argjson cfg "$PAYLOAD" \
               '[{name:$name} + $cfg]'
             )
-
-            echo "→ CREATE project: $PROJECT_NAME"
-            echo "Payload: $FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/upload?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
@@ -93,26 +91,22 @@ jobs:
           added: ${{ steps.changes.outputs.added }}
 
       # =============================================================
-      # UPDATE PROJECTS (for modified YAML files)
+      # UPDATE PROJECTS
       # =============================================================
       - name: Update Projects
         if: steps.changes.outputs.modified != ''
         run: |
           for file in ${modified}; do
-            echo "Updating project from: $file"
-
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
+            echo "→ Updating project: $PROJECT_NAME"
+
             PAYLOAD=$(yq -o=json '.' "$file")
 
-            # Merge name + YAML fields for update API
             FINAL_PAYLOAD=$(jq -n \
               --arg name "$PROJECT_NAME" \
               --argjson cfg "$PAYLOAD" \
               '[{name:$name} + $cfg]'
             )
-
-            echo "→ UPDATE project: $PROJECT_NAME"
-            echo "Payload: $FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/update?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
