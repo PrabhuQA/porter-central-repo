@@ -11,5 +11,6 @@ projectConfigs:
     scheduleTime: 0
     tag:
       - simple-restapp-17411
+      - simple-restapp-17410
     tagPattern: ""
     scanUpto: 0
