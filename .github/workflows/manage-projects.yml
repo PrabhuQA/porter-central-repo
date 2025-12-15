@@ -5,17 +5,25 @@ on:
     paths:
       - "source-projects/*.yaml"
       - "source-projects/*.yml"
+      - "artifacts/*.yaml"
+      - "artifacts/*.yml"
 
 jobs:
   sync:
     runs-on: ubuntu-latest
 
     steps:
+      # =============================================================
+      # Checkout Repository
+      # =============================================================
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # Needed to detect changes between HEAD^ and HEAD
+          fetch-depth: 2   # Needed for HEAD^ diff
 
+      # =============================================================
+      # Install Dependencies
+      # =============================================================
       - name: Install yq and jq
         run: |
           sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
@@ -28,26 +36,30 @@ jobs:
       - name: Detect added, modified, deleted files
         id: changes
         run: |
-          ADDED=$(git diff --name-only --diff-filter=A HEAD^ HEAD | grep "^source-projects/" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M HEAD^ HEAD | grep "^source-projects/" || true)
-          DELETED=$(git diff --name-only --diff-filter=D HEAD^ HEAD | grep "^source-projects/" || true)
+          ADDED=$(git diff --name-only --diff-filter=A HEAD^ HEAD | grep -E "^(source-projects|artifacts)/" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M HEAD^ HEAD | grep -E "^(source-projects|artifacts)/" || true)
+          DELETED=$(git diff --name-only --diff-filter=D HEAD^ HEAD | grep -E "^(source-projects|artifacts)/" || true)
 
-          echo "Added files: $ADDED"
-          echo "Modified files: $MODIFIED"
-          echo "Deleted files: $DELETED"
+          echo "Added files:"
+          echo "$ADDED"
+          echo "Modified files:"
+          echo "$MODIFIED"
+          echo "Deleted files:"
+          echo "$DELETED"
 
           echo "added=$ADDED" >> $GITHUB_OUTPUT
           echo "modified=$MODIFIED" >> $GITHUB_OUTPUT
           echo "deleted=$DELETED" >> $GITHUB_OUTPUT
 
       # =============================================================
-      # DELETE PROJECTS (for deleted YAML files)
+      # DELETE PROJECTS
       # =============================================================
       - name: Delete Projects
         if: steps.changes.outputs.deleted != ''
+        env:
+          deleted: ${{ steps.changes.outputs.deleted }}
         run: |
           for file in ${deleted}; do
-            echo "Deleting project for file: $file"
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
 
             echo "→ DELETE project: $PROJECT_NAME"
@@ -58,30 +70,35 @@ jobs:
               --header "Content-Type: application/json" \
               --data "[{\"name\":\"$PROJECT_NAME\"}]"
           done
-        env:
-          deleted: ${{ steps.changes.outputs.deleted }}
 
       # =============================================================
-      # CREATE PROJECTS (for newly added YAML files)
+      # CREATE PROJECTS (Source + Artifact)
       # =============================================================
       - name: Create Projects
         if: steps.changes.outputs.added != ''
+        env:
+          added: ${{ steps.changes.outputs.added }}
         run: |
           for file in ${added}; do
-            echo "Creating project from: $file"
+
+            if [[ "$file" == source-projects/* ]]; then
+              SCAN_TYPE="sourceScan"
+            elif [[ "$file" == artifacts/* ]]; then
+              SCAN_TYPE="artifactScan"
+            fi
 
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
             PAYLOAD=$(yq -o=json '.' "$file")
 
-            # Merge name + YAML fields (required by OpsMx API)
             FINAL_PAYLOAD=$(jq -n \
               --arg name "$PROJECT_NAME" \
+              --arg scanType "$SCAN_TYPE" \
               --argjson cfg "$PAYLOAD" \
-              '[{name:$name} + $cfg]'
+              '[{name:$name, scanType:$scanType} + $cfg]'
             )
 
-            echo "→ CREATE project: $PROJECT_NAME"
-            echo "Payload: $FINAL_PAYLOAD"
+            echo "→ CREATE $SCAN_TYPE project: $PROJECT_NAME"
+            echo "$FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/upload?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
@@ -89,30 +106,35 @@ jobs:
               --header "Content-Type: application/json" \
               --data "$FINAL_PAYLOAD"
           done
-        env:
-          added: ${{ steps.changes.outputs.added }}
 
       # =============================================================
-      # UPDATE PROJECTS (for modified YAML files)
+      # UPDATE PROJECTS (Source + Artifact)
       # =============================================================
       - name: Update Projects
         if: steps.changes.outputs.modified != ''
+        env:
+          modified: ${{ steps.changes.outputs.modified }}
         run: |
           for file in ${modified}; do
-            echo "Updating project from: $file"
+
+            if [[ "$file" == source-projects/* ]]; then
+              SCAN_TYPE="sourceScan"
+            elif [[ "$file" == artifacts/* ]]; then
+              SCAN_TYPE="artifactScan"
+            fi
 
             PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
             PAYLOAD=$(yq -o=json '.' "$file")
 
-            # Merge name + YAML fields for update API
             FINAL_PAYLOAD=$(jq -n \
               --arg name "$PROJECT_NAME" \
+              --arg scanType "$SCAN_TYPE" \
               --argjson cfg "$PAYLOAD" \
-              '[{name:$name} + $cfg]'
+              '[{name:$name, scanType:$scanType} + $cfg]'
             )
 
-            echo "→ UPDATE project: $PROJECT_NAME"
-            echo "Payload: $FINAL_PAYLOAD"
+            echo "→ UPDATE $SCAN_TYPE project: $PROJECT_NAME"
+            echo "$FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/update?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
@@ -120,5 +142,3 @@ jobs:
               --header "Content-Type: application/json" \
               --data "$FINAL_PAYLOAD"
           done
-        env:
-          modified: ${{ steps.changes.outputs.modified }}
