@@ -14,12 +14,12 @@ jobs:
 
     steps:
       # =============================================================
-      # Checkout Repository
+      # Checkout Repository (FULL HISTORY for multi-commit detection)
       # =============================================================
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # Needed for HEAD^ diff
+          fetch-depth: 0   # REQUIRED for merge-base
 
       # =============================================================
       # Install Dependencies
@@ -31,14 +31,20 @@ jobs:
           sudo apt-get update && sudo apt-get install -y jq
 
       # =============================================================
-      # Detect ADDED / MODIFIED / DELETED YAML files
+      # Detect ADDED / MODIFIED / DELETED files (MULTI-COMMIT SAFE)
       # =============================================================
       - name: Detect added, modified, deleted files
         id: changes
         run: |
-          ADDED=$(git diff --name-only --diff-filter=A HEAD^ HEAD | grep -E "^(source-projects|artifacts)/" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M HEAD^ HEAD | grep -E "^(source-projects|artifacts)/" || true)
-          DELETED=$(git diff --name-only --diff-filter=D HEAD^ HEAD | grep -E "^(source-projects|artifacts)/" || true)
+          # Ensure base branch exists
+          git fetch origin main
+
+          BASE=$(git merge-base HEAD origin/main)
+          echo "Diff base: $BASE"
+
+          ADDED=$(git diff --name-only --diff-filter=A $BASE HEAD | grep -E "^(source-projects|artifacts)/" || true)
+          MODIFIED=$(git diff --name-only --diff-filter=M $BASE HEAD | grep -E "^(source-projects|artifacts)/" || true)
+          DELETED=$(git diff --name-only --diff-filter=D $BASE HEAD | grep -E "^(source-projects|artifacts)/" || true)
 
           echo "Added files:"
           echo "$ADDED"
