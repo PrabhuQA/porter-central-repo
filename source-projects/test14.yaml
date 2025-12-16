@@ -13,5 +13,6 @@ projectConfigs:
       - b1
       - b2
       - b6
+      - b7
     branchPattern: ""
     scanUpto: 0
