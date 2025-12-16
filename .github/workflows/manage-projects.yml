@@ -115,9 +115,9 @@ jobs:
             [[ "$file" == source-projects/* ]] && SCAN_TYPE="sourceScan"
             [[ "$file" == artifacts/* ]] && SCAN_TYPE="artifactScan"
 
-            PROJECT_NAME=$(basename "$file" | sed 's/.ya?ml//')
-            PAYLOAD=$(yq -o=json '.' "$file" 2>/dev/null || echo "")
-
+            PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
+            PAYLOAD=$(yq -o=json '.' "$file")
+            
             [ -z "$PAYLOAD" ] && echo "Skipping invalid YAML: $file" && continue
             [ "$(echo "$PAYLOAD" | jq -r type)" != "object" ] && continue
 
