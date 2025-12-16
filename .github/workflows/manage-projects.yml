@@ -14,12 +14,12 @@ jobs:
 
     steps:
       # =============================================================
-      # Checkout Repository (FULL HISTORY for multi-commit detection)
+      # Checkout Repository
       # =============================================================
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # REQUIRED for merge-base
+          fetch-depth: 0   # REQUIRED for multi-commit diff
 
       # =============================================================
       # Install Dependencies
@@ -31,9 +31,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y jq
 
       # =============================================================
-      # Detect ADDED / MODIFIED / DELETED files (MULTI-COMMIT SAFE)
+      # Detect YAML Changes (multi-commit safe)
       # =============================================================
-      - name: Detect added, modified, deleted files
+      - name: Detect YAML changes
         id: changes
         run: |
           BEFORE="${{ github.event.before }}"
@@ -41,9 +41,14 @@ jobs:
 
           echo "Diff range: $BEFORE → $AFTER"
 
-          ADDED=$(git diff --name-only --diff-filter=A "$BEFORE" "$AFTER" | grep -E "^(source-projects|artifacts)/" || true)
-          MODIFIED=$(git diff --name-only --diff-filter=M "$BEFORE" "$AFTER" | grep -E "^(source-projects|artifacts)/" || true)
-          DELETED=$(git diff --name-only --diff-filter=D "$BEFORE" "$AFTER" | grep -E "^(source-projects|artifacts)/" || true)
+          ADDED=$(git diff --name-only --diff-filter=A "$BEFORE" "$AFTER" \
+            | grep -E "^(source-projects|artifacts)/.*\.ya?ml$" || true)
+
+          MODIFIED=$(git diff --name-only --diff-filter=M "$BEFORE" "$AFTER" \
+            | grep -E "^(source-projects|artifacts)/.*\.ya?ml$" || true)
+
+          DELETED=$(git diff --name-only --diff-filter=D "$BEFORE" "$AFTER" \
+            | grep -E "^(source-projects|artifacts)/.*\.ya?ml$" || true)
 
           echo "Added files:"
           echo "$ADDED"
@@ -52,120 +57,122 @@ jobs:
           echo "Deleted files:"
           echo "$DELETED"
 
-          {
-            echo "added<<EOF"
-            echo "$ADDED"
-            echo "EOF"
+          echo "added<<EOF" >> $GITHUB_OUTPUT
+          echo "$ADDED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-            echo "modified<<EOF"
-            echo "$MODIFIED"
-            echo "EOF"
+          echo "modified<<EOF" >> $GITHUB_OUTPUT
+          echo "$MODIFIED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-            echo "deleted<<EOF"
-            echo "$DELETED"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          echo "deleted<<EOF" >> $GITHUB_OUTPUT
+          echo "$DELETED" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       # =============================================================
-      # Exit early if no YAML changes found
+      # Exit cleanly if no YAML changes
       # =============================================================
-      - name: Skip if no YAML changes
+      - name: Exit if no YAML changes
         if: |
           steps.changes.outputs.added == '' &&
           steps.changes.outputs.modified == '' &&
           steps.changes.outputs.deleted == ''
         run: |
-          echo "No YAML changes detected. Skipping workflow."
+          echo "No YAML changes detected. Skipping sync."
           exit 0
 
       # =============================================================
-      # DELETE PROJECTS
+      # DELETE Projects
       # =============================================================
       - name: Delete Projects
         if: steps.changes.outputs.deleted != ''
         env:
           deleted: ${{ steps.changes.outputs.deleted }}
         run: |
-          for file in ${deleted}; do
-            PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
-
+          set +e
+          for file in $deleted; do
+            PROJECT_NAME=$(basename "$file" | sed 's/.ya?ml//')
             echo "→ DELETE project: $PROJECT_NAME"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/delete?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
               --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
               --header "Content-Type: application/json" \
-              --data "[{\"name\":\"$PROJECT_NAME\"}]"
+              --data "[{\"name\":\"$PROJECT_NAME\"}]" || true
           done
 
       # =============================================================
-      # CREATE PROJECTS (Source + Artifact)
+      # CREATE Projects (Source + Artifact)
       # =============================================================
       - name: Create Projects
         if: steps.changes.outputs.added != ''
         env:
           added: ${{ steps.changes.outputs.added }}
         run: |
-          for file in ${added}; do
+          set +e
+          for file in $added; do
 
-            if [[ "$file" == source-projects/* ]]; then
-              SCAN_TYPE="sourceScan"
-            elif [[ "$file" == artifacts/* ]]; then
-              SCAN_TYPE="artifactScan"
-            fi
+            [[ "$file" == source-projects/* ]] && SCAN_TYPE="sourceScan"
+            [[ "$file" == artifacts/* ]] && SCAN_TYPE="artifactScan"
 
-            PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
-            PAYLOAD=$(yq -o=json '.' "$file")
+            PROJECT_NAME=$(basename "$file" | sed 's/.ya?ml//')
+            PAYLOAD=$(yq -o=json '.' "$file" 2>/dev/null || echo "")
+
+            [ -z "$PAYLOAD" ] && echo "Skipping invalid YAML: $file" && continue
+            [ "$(echo "$PAYLOAD" | jq -r type)" != "object" ] && continue
 
             FINAL_PAYLOAD=$(jq -n \
               --arg name "$PROJECT_NAME" \
               --arg scanType "$SCAN_TYPE" \
-              --argjson cfg "$PAYLOAD" \
-              '[{name:$name, scanType:$scanType} + $cfg]'
-            )
+              --argjson cfg "$PAYLOAD" '
+                [{name:$name, scanType:$scanType} + $cfg]
+              ' 2>/dev/null || echo "")
+
+            [ -z "$FINAL_PAYLOAD" ] && continue
 
             echo "→ CREATE $SCAN_TYPE project: $PROJECT_NAME"
-            echo "$FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/upload?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
               --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
               --header "Content-Type: application/json" \
-              --data "$FINAL_PAYLOAD"
+              --data "$FINAL_PAYLOAD" || true
           done
 
       # =============================================================
-      # UPDATE PROJECTS (Source + Artifact)
+      # UPDATE Projects (Source + Artifact)
       # =============================================================
       - name: Update Projects
         if: steps.changes.outputs.modified != ''
         env:
           modified: ${{ steps.changes.outputs.modified }}
         run: |
-          for file in ${modified}; do
+          set +e
+          for file in $modified; do
 
-            if [[ "$file" == source-projects/* ]]; then
-              SCAN_TYPE="sourceScan"
-            elif [[ "$file" == artifacts/* ]]; then
-              SCAN_TYPE="artifactScan"
-            fi
+            [[ "$file" == source-projects/* ]] && SCAN_TYPE="sourceScan"
+            [[ "$file" == artifacts/* ]] && SCAN_TYPE="artifactScan"
 
-            PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
-            PAYLOAD=$(yq -o=json '.' "$file")
+            PROJECT_NAME=$(basename "$file" | sed 's/.ya?ml//')
+            PAYLOAD=$(yq -o=json '.' "$file" 2>/dev/null || echo "")
+
+            [ -z "$PAYLOAD" ] && continue
+            [ "$(echo "$PAYLOAD" | jq -r type)" != "object" ] && continue
 
             FINAL_PAYLOAD=$(jq -n \
               --arg name "$PROJECT_NAME" \
               --arg scanType "$SCAN_TYPE" \
-              --argjson cfg "$PAYLOAD" \
-              '[{name:$name, scanType:$scanType} + $cfg]'
-            )
+              --argjson cfg "$PAYLOAD" '
+                [{name:$name, scanType:$scanType} + $cfg]
+              ' 2>/dev/null || echo "")
+
+            [ -z "$FINAL_PAYLOAD" ] && continue
 
             echo "→ UPDATE $SCAN_TYPE project: $PROJECT_NAME"
-            echo "$FINAL_PAYLOAD"
 
             curl --location \
               "https://nov-testing.oea-dev.opsmx.net/gate/ssdservice/v1/scan/project/update?orgId=${{ secrets.ORG_ID }}&teamId=${{ secrets.TEAM_ID }}" \
               --header "X-OpsMx-Auth: Bearer ${{ secrets.API_TOKEN }}" \
               --header "Content-Type: application/json" \
-              --data "$FINAL_PAYLOAD"
+              --data "$FINAL_PAYLOAD" || true
           done
