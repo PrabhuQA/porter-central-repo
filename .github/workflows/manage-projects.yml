@@ -91,7 +91,7 @@ jobs:
         run: |
           set +e
           for file in $deleted; do
-            PROJECT_NAME=$(basename "$file" | sed 's/.ya?ml//')
+            PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
             echo "→ DELETE project: $PROJECT_NAME"
 
             curl --location \
@@ -153,8 +153,8 @@ jobs:
             [[ "$file" == source-projects/* ]] && SCAN_TYPE="sourceScan"
             [[ "$file" == artifacts/* ]] && SCAN_TYPE="artifactScan"
 
-            PROJECT_NAME=$(basename "$file" | sed 's/.ya?ml//')
-            PAYLOAD=$(yq -o=json '.' "$file" 2>/dev/null || echo "")
+            PROJECT_NAME=$(basename "$file" | sed 's/.yaml//; s/.yml//')
+            PAYLOAD=$(yq -o=json '.' "$file")
 
             [ -z "$PAYLOAD" ] && continue
             [ "$(echo "$PAYLOAD" | jq -r type)" != "object" ] && continue
