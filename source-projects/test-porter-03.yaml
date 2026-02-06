@@ -1,0 +1,15 @@
+scanType: sourceScan
+platform: github
+accountName: test-account (porter-usecase)
+teamName: porter-usecase
+scanLevel: repoLevel
+organisation: BasavaRajSomesetty
+type: user
+
+projectConfigs:
+  - repository: enterprise-spinnaker
+    scheduleTime: 0
+    branch:
+      - main
+    branchPattern: ""
+    scanUpto: 0
